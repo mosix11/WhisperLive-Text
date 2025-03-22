@@ -20,6 +20,13 @@ class Client:
     """
     INSTANCES = {}
     END_OF_AUDIO = "END_OF_AUDIO"
+    
+    def default_callback(text, is_final):
+        # Truncate to last 3 entries for brevity.
+        text = text[-3:]
+        utils.clear_screen()
+        utils.print_transcript(text)
+
 
     def __init__(
         self,
@@ -30,6 +37,7 @@ class Client:
         model="small",
         srt_file_path="output.srt",
         use_vad=True,
+        callback=None,
         log_transcription=True,
         max_clients=4,
         max_connection_time=600,
@@ -66,6 +74,7 @@ class Client:
         self.use_vad = use_vad
         self.last_segment = None
         self.last_received_segment = None
+        self.callback = callback if callback is not None else Client.default_callback
         self.log_transcription = log_transcription
         self.max_clients = max_clients
         self.max_connection_time = max_connection_time
@@ -112,7 +121,7 @@ class Client:
         elif status == "WARNING":
             print(f"Message from Server: {message_data['message']}")
 
-    def process_segments(self, segments):
+    def process_segments(self, segments, is_final):
         """Processes transcript segments."""
         text = []
         for i, seg in enumerate(segments):
@@ -131,9 +140,7 @@ class Client:
 
         if self.log_transcription:
             # Truncate to last 3 entries for brevity.
-            text = text[-3:]
-            utils.clear_screen()
-            utils.print_transcript(text)
+            self.callback(text, is_final)
 
     def on_message(self, ws, message):
         """
@@ -178,7 +185,7 @@ class Client:
             return
 
         if "segments" in message.keys():
-            self.process_segments(message["segments"])
+            self.process_segments(message["segments"], message["is_final"])
 
     def on_error(self, ws, error):
         print(f"[ERROR] WebSocket Error: {error}")
@@ -304,6 +311,7 @@ class TranscriptionTeeClient:
         self.output_recording_filename = output_recording_filename
         self.mute_audio_playback = mute_audio_playback
         self.frames = b""
+        self.paused = False
         self.p = pyaudio.PyAudio()
         try:
             self.stream = self.p.open(
@@ -566,21 +574,23 @@ class TranscriptionTeeClient:
             os.makedirs("chunks")
         try:
             for _ in range(0, int(self.rate / self.chunk * self.record_seconds)):
-                if not any(client.recording for client in self.clients):
-                    break
-                data = self.stream.read(self.chunk, exception_on_overflow=False)
-                self.frames += data
+                if not self.paused:
+                    
+                    if not any(client.recording for client in self.clients):
+                        break
+                    data = self.stream.read(self.chunk, exception_on_overflow=False)
+                    self.frames += data
 
-                audio_array = self.bytes_to_float_array(data)
+                    audio_array = self.bytes_to_float_array(data)
 
-                self.multicast_packet(audio_array.tobytes())
+                    self.multicast_packet(audio_array.tobytes())
 
-                # save frames if more than a minute
-                if len(self.frames) > 60 * self.rate:
-                    if self.save_output_recording:
-                        self.save_chunk(n_audio_file)
-                        n_audio_file += 1
-                    self.frames = b""
+                    # save frames if more than a minute
+                    if len(self.frames) > 60 * self.rate:
+                        if self.save_output_recording:
+                            self.save_chunk(n_audio_file)
+                            n_audio_file += 1
+                        self.frames = b""
             self.write_all_clients_srt()
 
         except KeyboardInterrupt:
@@ -701,6 +711,7 @@ class TranscriptionClient(TranscriptionTeeClient):
         translate=False,
         model="small",
         use_vad=True,
+        callback=None,
         save_output_recording=False,
         output_recording_filename="./output_recording.wav",
         output_transcription_path="./output.srt",
@@ -712,7 +723,8 @@ class TranscriptionClient(TranscriptionTeeClient):
         self.client = Client(
             host, port, lang, translate, model, srt_file_path=output_transcription_path,
             use_vad=use_vad, log_transcription=log_transcription, max_clients=max_clients,
-            max_connection_time=max_connection_time
+            max_connection_time=max_connection_time,
+            callback=callback
         )
 
         if save_output_recording and not output_recording_filename.endswith(".wav"):
