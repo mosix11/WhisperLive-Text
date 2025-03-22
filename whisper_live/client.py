@@ -27,6 +27,16 @@ class Client:
         utils.clear_screen()
         utils.print_transcript(text)
 
+    # def default_callback(segments, is_final):
+    #     # Print all transcript segments with timing info.
+    #     for seg in segments:
+    #         start = seg.get("start", "N/A")
+    #         end = seg.get("end", "N/A")
+    #         try:
+    #             duration = float(end) - float(start)
+    #         except Exception:
+    #             duration = 0.0
+    #         print(f"[{start} - {end} (dur: {duration:.2f}s)] {seg['text']}")
 
     def __init__(
         self,
@@ -141,6 +151,31 @@ class Client:
         if self.log_transcription:
             # Truncate to last 3 entries for brevity.
             self.callback(text, is_final)
+
+    # def process_segments(self, segments, is_final):
+    #     transcript_texts = []
+    #     for i, seg in enumerate(segments):
+    #         if not transcript_texts or transcript_texts[-1] != seg["text"]:
+    #             transcript_texts.append(seg["text"])
+    #             # Save incomplete segment separately
+    #             if i == len(segments) - 1 and not seg.get("completed", False):
+    #                 self.last_segment = seg
+    #             # For faster_whisper backend, append completed segments to the transcript history.
+    #             elif (self.server_backend == "faster_whisper" and seg.get("completed", False) and
+    #                 (not self.transcript or float(seg['start']) >= float(self.transcript[-1]['end']))):
+    #                 self.transcript.append(seg)
+    #     # Update last received segment info.
+    #     if self.last_received_segment is None or self.last_received_segment != segments[-1]["text"]:
+    #         self.last_response_received = time.time()
+    #         self.last_received_segment = segments[-1]["text"]
+
+    #     # Instead of sending only the last 3 segments after clearing the screen,
+    #     # we pass the full transcript history (including an incomplete last segment, if any)
+    #     if self.log_transcription:
+    #         transcript_history = self.transcript.copy()
+    #         if self.last_segment is not None and (not transcript_history or self.last_segment["text"] != transcript_history[-1]["text"]):
+    #             transcript_history.append(self.last_segment)
+    #         self.callback(transcript_history, is_final)
 
     def on_message(self, ws, message):
         """
