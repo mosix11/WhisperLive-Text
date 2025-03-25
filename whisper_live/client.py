@@ -13,6 +13,7 @@ import time
 import av
 import whisper_live.utils as utils
 
+import datetime
 
 class Client:
     """

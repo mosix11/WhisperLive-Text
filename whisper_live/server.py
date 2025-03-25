@@ -6,6 +6,7 @@ import functools
 import logging
 from enum import Enum
 from typing import List, Optional
+import datetime
 
 import torch
 import numpy as np
@@ -1039,7 +1040,8 @@ class ServeClientFasterWhisper(ServeClientBase):
             'start': "{:.3f}".format(start),
             'end': "{:.3f}".format(end),
             'text': text,
-            'completed': completed
+            'completed': completed,
+            'time_added': datetime.datetime.now().isoformat()
         }
 
     def update_segments(self, segments, duration):
