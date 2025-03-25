@@ -20,23 +20,6 @@ class Client:
     """
     INSTANCES = {}
     END_OF_AUDIO = "END_OF_AUDIO"
-    
-    def default_callback(text, is_final):
-        # Truncate to last 3 entries for brevity.
-        text = text[-3:]
-        utils.clear_screen()
-        utils.print_transcript(text)
-
-    # def default_callback(segments, is_final):
-    #     # Print all transcript segments with timing info.
-    #     for seg in segments:
-    #         start = seg.get("start", "N/A")
-    #         end = seg.get("end", "N/A")
-    #         try:
-    #             duration = float(end) - float(start)
-    #         except Exception:
-    #             duration = 0.0
-    #         print(f"[{start} - {end} (dur: {duration:.2f}s)] {seg['text']}")
 
     def __init__(
         self,
@@ -47,10 +30,10 @@ class Client:
         model="small",
         srt_file_path="output.srt",
         use_vad=True,
-        callback=None,
         log_transcription=True,
         max_clients=4,
         max_connection_time=600,
+        on_final_transcription=None
     ):
         """
         Initializes a Client instance for audio recording and streaming to a server.
@@ -84,10 +67,10 @@ class Client:
         self.use_vad = use_vad
         self.last_segment = None
         self.last_received_segment = None
-        self.callback = callback if callback is not None else Client.default_callback
         self.log_transcription = log_transcription
         self.max_clients = max_clients
         self.max_connection_time = max_connection_time
+        self.on_final_transcription = on_final_transcription
 
         if translate:
             self.task = "translate"
@@ -131,7 +114,7 @@ class Client:
         elif status == "WARNING":
             print(f"Message from Server: {message_data['message']}")
 
-    def process_segments(self, segments, is_final):
+    def process_segments(self, segments):
         """Processes transcript segments."""
         text = []
         for i, seg in enumerate(segments):
@@ -143,6 +126,7 @@ class Client:
                       (not self.transcript or
                         float(seg['start']) >= float(self.transcript[-1]['end']))):
                     self.transcript.append(seg)
+        
         # update last received segment and last valid response time
         if self.last_received_segment is None or self.last_received_segment != segments[-1]["text"]:
             self.last_response_received = time.time()
@@ -150,32 +134,9 @@ class Client:
 
         if self.log_transcription:
             # Truncate to last 3 entries for brevity.
-            self.callback(text, is_final)
-
-    # def process_segments(self, segments, is_final):
-    #     transcript_texts = []
-    #     for i, seg in enumerate(segments):
-    #         if not transcript_texts or transcript_texts[-1] != seg["text"]:
-    #             transcript_texts.append(seg["text"])
-    #             # Save incomplete segment separately
-    #             if i == len(segments) - 1 and not seg.get("completed", False):
-    #                 self.last_segment = seg
-    #             # For faster_whisper backend, append completed segments to the transcript history.
-    #             elif (self.server_backend == "faster_whisper" and seg.get("completed", False) and
-    #                 (not self.transcript or float(seg['start']) >= float(self.transcript[-1]['end']))):
-    #                 self.transcript.append(seg)
-    #     # Update last received segment info.
-    #     if self.last_received_segment is None or self.last_received_segment != segments[-1]["text"]:
-    #         self.last_response_received = time.time()
-    #         self.last_received_segment = segments[-1]["text"]
-
-    #     # Instead of sending only the last 3 segments after clearing the screen,
-    #     # we pass the full transcript history (including an incomplete last segment, if any)
-    #     if self.log_transcription:
-    #         transcript_history = self.transcript.copy()
-    #         if self.last_segment is not None and (not transcript_history or self.last_segment["text"] != transcript_history[-1]["text"]):
-    #             transcript_history.append(self.last_segment)
-    #         self.callback(transcript_history, is_final)
+            text = text[-3:]
+            utils.clear_screen()
+            utils.print_transcript(text)
 
     def on_message(self, ws, message):
         """
@@ -219,8 +180,20 @@ class Client:
             )
             return
 
-        if "segments" in message.keys():
-            self.process_segments(message["segments"], message["is_final"])
+        # if "segments" in message.keys():
+        #     self.process_segments(message["segments"])
+        if "segments" in message:
+            segments = message["segments"]
+            self.process_segments(segments)
+            # Check if the last segment is marked as complete
+            if segments and segments[-1].get("completed", False):
+
+                # final_text = segments[-1]["text"]
+                # # Store it or invoke the callback
+                # self.last_final_text = final_text
+                # if self.on_final_transcription:
+                #     self.on_final_transcription(final_text)
+                self.on_final_transcription(self.transcript)
 
     def on_error(self, ws, error):
         print(f"[ERROR] WebSocket Error: {error}")
@@ -346,7 +319,6 @@ class TranscriptionTeeClient:
         self.output_recording_filename = output_recording_filename
         self.mute_audio_playback = mute_audio_playback
         self.frames = b""
-        self.paused = False
         self.p = pyaudio.PyAudio()
         try:
             self.stream = self.p.open(
@@ -609,23 +581,21 @@ class TranscriptionTeeClient:
             os.makedirs("chunks")
         try:
             for _ in range(0, int(self.rate / self.chunk * self.record_seconds)):
-                if not self.paused:
-                    
-                    if not any(client.recording for client in self.clients):
-                        break
-                    data = self.stream.read(self.chunk, exception_on_overflow=False)
-                    self.frames += data
+                if not any(client.recording for client in self.clients):
+                    break
+                data = self.stream.read(self.chunk, exception_on_overflow=False)
+                self.frames += data
 
-                    audio_array = self.bytes_to_float_array(data)
+                audio_array = self.bytes_to_float_array(data)
 
-                    self.multicast_packet(audio_array.tobytes())
+                self.multicast_packet(audio_array.tobytes())
 
-                    # save frames if more than a minute
-                    if len(self.frames) > 60 * self.rate:
-                        if self.save_output_recording:
-                            self.save_chunk(n_audio_file)
-                            n_audio_file += 1
-                        self.frames = b""
+                # save frames if more than a minute
+                if len(self.frames) > 60 * self.rate:
+                    if self.save_output_recording:
+                        self.save_chunk(n_audio_file)
+                        n_audio_file += 1
+                    self.frames = b""
             self.write_all_clients_srt()
 
         except KeyboardInterrupt:
@@ -746,7 +716,6 @@ class TranscriptionClient(TranscriptionTeeClient):
         translate=False,
         model="small",
         use_vad=True,
-        callback=None,
         save_output_recording=False,
         output_recording_filename="./output_recording.wav",
         output_transcription_path="./output.srt",
@@ -754,12 +723,12 @@ class TranscriptionClient(TranscriptionTeeClient):
         max_clients=4,
         max_connection_time=600,
         mute_audio_playback=False,
+        on_final_transcription=None
     ):
         self.client = Client(
             host, port, lang, translate, model, srt_file_path=output_transcription_path,
             use_vad=use_vad, log_transcription=log_transcription, max_clients=max_clients,
-            max_connection_time=max_connection_time,
-            callback=callback
+            max_connection_time=max_connection_time, on_final_transcription=on_final_transcription
         )
 
         if save_output_recording and not output_recording_filename.endswith(".wav"):
