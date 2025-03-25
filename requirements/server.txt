@@ -1,6 +1,6 @@
-faster-whisper
+faster-whisper==1.1.0
 websockets
-onnxruntime-gpu
+onnxruntime==1.17.0
 numba
 kaldialign
 soundfile
@@ -8,5 +8,6 @@ scipy
 av
 jiwer
 evaluate
-openai-whisper
-tokenizers
+numpy<2
+openai-whisper==20240930
+tokenizers==0.20.3
